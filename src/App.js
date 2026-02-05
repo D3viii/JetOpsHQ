@@ -7,6 +7,7 @@ import Planes from "./pages/Planes";
 import Scheduling from "./pages/Scheduling";
 import Dispatch from "./pages/Dispatch";
 import Accommodations from "./pages/Accommodations";
+import Clients from "./pages/Clients";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/scheduling" element={<Scheduling />} />
           <Route path="/dispatch" element={<Dispatch />} />
           <Route path="/accommodations" element={<Accommodations />} />
+          <Route path="/clients" element={<Clients />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
