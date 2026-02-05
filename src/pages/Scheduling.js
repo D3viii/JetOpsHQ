@@ -246,23 +246,38 @@ export default function Scheduling() {
   const [days, setDays] = useState(60);
   const [showOff, setShowOff] = useState(false);
 
-  const [tails, setTails] = useState([
+  // Keep these as your source of truth (you can later pull from Crew/Planes pages)
+  const [tails] = useState([
     { tailNumber: "118DL", colorHex: "#22c55e" },
     { tailNumber: "808ME", colorHex: "#f97316" }
   ]);
 
-  const [pilots, setPilots] = useState([
-    { name: "Rod", onDays: 15, offDays: 10, preferredTail: "118DL" },
-    { name: "John", onDays: 15, offDays: 10, preferredTail: "808ME" },
-    { name: "Dan", onDays: 10, offDays: 10, preferredTail: "" },
-    { name: "Kyle", onDays: 10, offDays: 10, preferredTail: "" },
-    { name: "Josh", onDays: 10, offDays: 10, preferredTail: "" },
-    { name: "Jerry", onDays: 10, offDays: 10, preferredTail: "" },
+  const [pilots] = useState([
+    { name: "Rod", preferredTail: "118DL" },
+    { name: "John", preferredTail: "808ME" },
+    { name: "Dan", preferredTail: "" },
+    { name: "Kyle", preferredTail: "" },
+    { name: "Josh", preferredTail: "" },
+    { name: "Jerry", preferredTail: "" }
   ]);
 
   const [assignments, setAssignments] = useState([]);
   const [trips, setTrips] = useState([]);
 
+  // + menu
+  const [isPlusOpen, setIsPlusOpen] = useState(false);
+
+  // Generate Schedule modal
+  const [isGenOpen, setIsGenOpen] = useState(false);
+  const [genDraft, setGenDraft] = useState({
+    pilot: "__ALL__", // or pilot name
+    status: "ON", // ON | OFF
+    staggered: true,
+    applyDays: 30,
+    staggerOffsetDays: 0 // used only when staggered
+  });
+
+  // Trip modal (kept)
   const [isTripModalOpen, setIsTripModalOpen] = useState(false);
   const [tripDraft, setTripDraft] = useState({
     clientName: "",
@@ -279,6 +294,129 @@ export default function Scheduling() {
     for (const t of tails) m.set(t.tailNumber, t.colorHex);
     return m;
   }, [tails]);
+
+  // ----- helper: (re)assign tails per day ensuring 2-pilot minimum per tail -----
+  const rebalanceTailsForRange = (rangeStartYMD, rangeDays) => {
+    const tailsList = tails.map(t => t.tailNumber).filter(Boolean);
+    if (tailsList.length === 0) return;
+
+    setAssignments(prev => {
+      const byDate = new Map(); // date -> assignments[] (ON only)
+      const out = prev.map(a => ({ ...a })); // clone
+
+      // index for editing
+      const idxByKey = new Map();
+      out.forEach((a, idx) => idxByKey.set(`${a.date}__${a.pilotName}`, idx));
+
+      for (let i = 0; i < rangeDays; i++) {
+        const date = toYMD(addDays(new Date(rangeStartYMD + "T00:00:00"), i));
+
+        // Collect ON pilots that day
+        const on = out.filter(a => a.date === date && a.status === "ON");
+        byDate.set(date, on);
+      }
+
+      // round-robin assign pairs to tails
+      let rr = 0;
+      for (let i = 0; i < rangeDays; i++) {
+        const date = toYMD(addDays(new Date(rangeStartYMD + "T00:00:00"), i));
+        const onList = (byDate.get(date) ?? []).slice().sort((a, b) => a.pilotName.localeCompare(b.pilotName));
+
+        // make pairs of 2. If odd -> last becomes EXTRA (cannot staff solo)
+        const pairs = [];
+        const extras = [];
+        for (let j = 0; j < onList.length; j += 2) {
+          const a = onList[j];
+          const b = onList[j + 1];
+          if (!b) extras.push(a);
+          else pairs.push([a, b]);
+        }
+
+        const tailForPilot = new Map();
+        for (const [a, b] of pairs) {
+          const tail = tailsList[rr % tailsList.length];
+          rr++;
+          tailForPilot.set(a.pilotName, tail);
+          tailForPilot.set(b.pilotName, tail);
+        }
+        for (const a of extras) tailForPilot.set(a.pilotName, "EXTRA");
+
+        // write back to out
+        for (const a of onList) {
+          const idx = idxByKey.get(`${a.date}__${a.pilotName}`);
+          if (idx != null) out[idx].tailNumber = tailForPilot.get(a.pilotName) ?? "EXTRA";
+        }
+      }
+
+      return out;
+    });
+  };
+
+  // ----- helper: ensure assignment row exists for pilot/date -----
+  const ensureAssignment = (draftPilotName, date) => {
+    setAssignments(prev => {
+      const exists = prev.find(a => a.date === date && a.pilotName === draftPilotName);
+      if (exists) return prev;
+
+      return [
+        ...prev,
+        { date, pilotName: draftPilotName, status: "OFF", tailNumber: "" }
+      ];
+    });
+  };
+
+  // ----- Generate Schedule (new behavior) -----
+  const applyGenerateSchedule = () => {
+    const rangeDays = Math.max(1, Math.min(365, Number(genDraft.applyDays) || 30));
+    const baseStart = new Date(startDate + "T00:00:00");
+
+    const targetPilots =
+      genDraft.pilot === "__ALL__"
+        ? pilots.map(p => p.name)
+        : [genDraft.pilot];
+
+    // first: ensure rows exist
+    for (let di = 0; di < rangeDays; di++) {
+      const date = toYMD(addDays(baseStart, di));
+      for (const name of targetPilots) ensureAssignment(name, date);
+    }
+
+    // then: apply status with optional staggering
+    setAssignments(prev => {
+      const out = prev.map(a => ({ ...a }));
+
+      const idx = new Map();
+      out.forEach((a, i) => idx.set(`${a.date}__${a.pilotName}`, i));
+
+      targetPilots.forEach((pilotName, pIndex) => {
+        const pilotOffset = genDraft.staggered ? (Number(genDraft.staggerOffsetDays) || 0) + pIndex : 0;
+
+        for (let di = 0; di < rangeDays; di++) {
+          const date = toYMD(addDays(baseStart, di));
+          const key = `${date}__${pilotName}`;
+          const i = idx.get(key);
+          if (i == null) continue;
+
+          // If staggered, shift the start day forward per pilot
+          if (genDraft.staggered && di < pilotOffset) {
+            // leave as-is
+            continue;
+          }
+
+          out[i].status = genDraft.status;
+          out[i].tailNumber = genDraft.status === "ON" ? (out[i].tailNumber || "EXTRA") : "";
+        }
+      });
+
+      return out;
+    });
+
+    // after status changes, rebalance tails so ON pilots are always paired on same plane
+    rebalanceTailsForRange(startDate, rangeDays);
+
+    setIsGenOpen(false);
+    setIsPlusOpen(false);
+  };
 
   const fcEvents = useMemo(() => {
     const assignmentEvents = assignments
@@ -318,44 +456,69 @@ export default function Scheduling() {
     return [...assignmentEvents, ...tripEvents];
   }, [assignments, showOff, tailColor, trips]);
 
-  const generate = () => {
-    const cleanPilots = pilots
-      .map(p => ({ ...p, name: (p.name ?? "").trim() }))
-      .filter(p => p.name.length > 0);
-
-    const cleanTails = tails
-      .map(t => ({ ...t, tailNumber: (t.tailNumber ?? "").trim() }))
-      .filter(t => t.tailNumber.length > 0);
-
-    const a = generateSchedule({
-      startDate,
-      days: Math.max(7, Math.min(365, Number(days) || 60)),
-      pilots: cleanPilots,
-      tails: cleanTails
-    });
-
-    setAssignments(a);
-  };
-
-  const updatePilot = (idx, patch) => {
-    setPilots(prev => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
-  };
-
-  const updateTail = (idx, patch) => {
-    setTails(prev => prev.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
-  };
-
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-2">
         <h3 className="mb-0">Scheduling</h3>
-        <div className="d-flex gap-2">
+
+        <div className="d-flex gap-2 align-items-center">
           <button className="btn btn-outline-secondary" onClick={() => setView("calendar")}>
-            Calendar View
+            Calendar
           </button>
           <button className="btn btn-outline-secondary" onClick={() => setView("grid")}>
-            Tail Grid View
+            Tail Grid
           </button>
+
+          <div style={{ position: "relative" }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => setIsPlusOpen(v => !v)}
+              title="Actions"
+              style={{ width: 44, height: 38, fontWeight: 900 }}
+            >
+              +
+            </button>
+
+            {isPlusOpen && (
+              <div
+                className="shadow-sm"
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: 44,
+                  background: "white",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 10,
+                  width: 220,
+                  zIndex: 50,
+                  overflow: "hidden"
+                }}
+              >
+                <button
+                  className="btn btn-link text-start w-100"
+                  style={{ padding: "10px 12px", textDecoration: "none" }}
+                  onClick={() => {
+                    setGenDraft(d => ({ ...d, applyDays: Math.min(60, Number(days) || 60) }));
+                    setIsGenOpen(true);
+                  }}
+                >
+                  Generate Schedule
+                </button>
+
+                <button
+                  className="btn btn-link text-start w-100"
+                  style={{ padding: "10px 12px", textDecoration: "none" }}
+                  onClick={() => {
+                    setTripDraft(d => ({ ...d, date: startDate }));
+                    setIsTripModalOpen(true);
+                    setIsPlusOpen(false);
+                  }}
+                >
+                  Build Trip
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -367,66 +530,21 @@ export default function Scheduling() {
 
         <label className="d-grid gap-1">
           <span style={{ fontSize: 12, opacity: 0.7 }}>Days</span>
-          <input className="form-control" type="number" value={days} min={7} max={365} onChange={e => setDays(e.target.value)} style={{ width: 120 }} />
+          <input
+            className="form-control"
+            type="number"
+            value={days}
+            min={7}
+            max={365}
+            onChange={e => setDays(e.target.value)}
+            style={{ width: 120 }}
+          />
         </label>
 
         <label className="d-flex align-items-center gap-2 mb-1">
           <input type="checkbox" checked={showOff} onChange={e => setShowOff(e.target.checked)} />
           <span>Show OFF days</span>
         </label>
-
-        <button className="btn btn-primary" onClick={generate}>Generate Schedule</button>
-
-        <button
-          className="btn btn-outline-primary"
-          onClick={() => {
-            setTripDraft(d => ({ ...d, date: startDate }));
-            setIsTripModalOpen(true);
-          }}
-        >
-          Build Trip
-        </button>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-        <div style={card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h5 style={{ margin: 0 }}>Tails</h5>
-            <button className="btn btn-sm btn-outline-secondary" onClick={() => setTails(prev => [...prev, { tailNumber: "", colorHex: "#3b82f6" }])}>
-              + Tail
-            </button>
-          </div>
-
-          {tails.map((t, idx) => (
-            <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 160px 44px", gap: 8, marginTop: 8 }}>
-              <input className="form-control" placeholder="Tail (e.g. 118DL)" value={t.tailNumber} onChange={e => updateTail(idx, { tailNumber: e.target.value })} />
-              <input className="form-control" placeholder="#22c55e" value={t.colorHex} onChange={e => updateTail(idx, { colorHex: e.target.value })} />
-              <div style={{ width: 36, height: 32, borderRadius: 6, background: t.colorHex, border: "1px solid #ddd" }} />
-            </div>
-          ))}
-        </div>
-
-        <div style={card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h5 style={{ margin: 0 }}>Pilots</h5>
-            <button className="btn btn-sm btn-outline-secondary" onClick={() => setPilots(prev => [...prev, { name: "", onDays: 7, offDays: 5, preferredTail: "" }])}>
-              + Pilot
-            </button>
-          </div>
-
-          {pilots.map((p, idx) => (
-            <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 1fr", gap: 8, marginTop: 8 }}>
-              <input className="form-control" placeholder="Name" value={p.name} onChange={e => updatePilot(idx, { name: e.target.value })} />
-              <input className="form-control" type="number" min={0} placeholder="On" value={p.onDays} onChange={e => updatePilot(idx, { onDays: Number(e.target.value) })} />
-              <input className="form-control" type="number" min={0} placeholder="Off" value={p.offDays} onChange={e => updatePilot(idx, { offDays: Number(e.target.value) })} />
-              <input className="form-control" placeholder="Preferred tail (optional)" value={p.preferredTail ?? ""} onChange={e => updatePilot(idx, { preferredTail: e.target.value })} />
-            </div>
-          ))}
-
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-            Rotation is per pilot: ON for onDays, then OFF for offDays, repeating from the start date.
-          </div>
-        </div>
       </div>
 
       {view === "calendar" ? (
@@ -459,6 +577,118 @@ export default function Scheduling() {
         </div>
       )}
 
+      {/* Generate Schedule Modal */}
+      {isGenOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999
+          }}
+          onClick={() => setIsGenOpen(false)}
+        >
+          <div
+            style={{
+              width: "min(680px, 100%)",
+              background: "white",
+              borderRadius: 12,
+              padding: 16,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.25)"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="d-flex justify-content-between align-items-center">
+              <h4 className="mb-0">Generate Schedule</h4>
+              <button className="btn btn-sm btn-outline-secondary" onClick={() => setIsGenOpen(false)}>✕</button>
+            </div>
+
+            <div className="mt-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <label className="d-grid gap-1">
+                <span>Pilot</span>
+                <select
+                  className="form-select"
+                  value={genDraft.pilot}
+                  onChange={(e) => setGenDraft(d => ({ ...d, pilot: e.target.value }))}
+                >
+                  <option value="__ALL__">All pilots</option>
+                  {pilots.map(p => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="d-grid gap-1">
+                <span>On / Off</span>
+                <select
+                  className="form-select"
+                  value={genDraft.status}
+                  onChange={(e) => setGenDraft(d => ({ ...d, status: e.target.value }))}
+                >
+                  <option value="ON">ON</option>
+                  <option value="OFF">OFF</option>
+                </select>
+              </label>
+
+              <label className="d-grid gap-1">
+                <span>Apply days</span>
+                <input
+                  className="form-control"
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={genDraft.applyDays}
+                  onChange={(e) => setGenDraft(d => ({ ...d, applyDays: Number(e.target.value) }))}
+                />
+              </label>
+
+              <label className="d-flex align-items-center gap-2" style={{ marginTop: 24 }}>
+                <input
+                  type="checkbox"
+                  checked={genDraft.staggered}
+                  onChange={(e) => setGenDraft(d => ({ ...d, staggered: e.target.checked }))}
+                />
+                <span>Staggered</span>
+              </label>
+
+              {genDraft.staggered && (
+                <label className="d-grid gap-1">
+                  <span>Stagger offset (days)</span>
+                  <input
+                    className="form-control"
+                    type="number"
+                    min={0}
+                    max={30}
+                    value={genDraft.staggerOffsetDays}
+                    onChange={(e) => setGenDraft(d => ({ ...d, staggerOffsetDays: Number(e.target.value) }))}
+                  />
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    When “All pilots” is selected, each pilot shifts by +1 day (plus this offset).
+                  </div>
+                </label>
+              )}
+            </div>
+
+            <div className="d-flex justify-content-end gap-2 mt-3">
+              <button className="btn btn-outline-secondary" onClick={() => setIsGenOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-dark"
+                onClick={applyGenerateSchedule}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Trip Modal (unchanged from your current version, left as-is) */}
       {isTripModalOpen && (
         <div
           style={{
@@ -558,6 +788,7 @@ export default function Scheduling() {
                   ]);
 
                   setIsTripModalOpen(false);
+                  setIsPlusOpen(false);
                   setTripDraft(d => ({
                     ...d,
                     clientName: "",
