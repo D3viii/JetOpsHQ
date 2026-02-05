@@ -14,7 +14,7 @@ export default function Sidebar() {
     <aside style={{ width: 260, background: "#0b1220", color: "white", padding: 16 }}>
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 800, fontSize: 18 }}>JetOpsHQ</div>
-        <div style={{ opacity: 0.7, fontSize: 12 }}>Full Operations POC</div>
+        <div style={{ opacity: 0.7, fontSize: 12 }}></div>
       </div>
 
       {[
