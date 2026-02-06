@@ -26,6 +26,9 @@ export default function Sidebar() {
         ["/dispatch", "Dispatch"],
         ["/accommodations", "Accommodations"],
         ["/clients", "Clients"],
+        ["/users", "Users"],
+        ["/it-assets", "IT Assets"],
+        ["/login", "Login"],
       ].map(([to, label]) => (
         <NavLink
           key={to}
