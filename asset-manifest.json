@@ -1,15 +1,16 @@
 {
   "files": {
-    "main.css": "/static/css/main.3b71cc2a.css",
-    "main.js": "/static/js/main.a3bfcbe9.js",
+    "main.css": "/static/css/main.60735245.css",
+    "main.js": "/static/js/main.d91f8c79.js",
     "static/js/453.154f73af.chunk.js": "/static/js/453.154f73af.chunk.js",
+    "static/media/jetopshq-logo.png": "/static/media/jetopshq-logo.4c21fa335a4c0e415516.png",
     "index.html": "/index.html",
-    "main.3b71cc2a.css.map": "/static/css/main.3b71cc2a.css.map",
-    "main.a3bfcbe9.js.map": "/static/js/main.a3bfcbe9.js.map",
+    "main.60735245.css.map": "/static/css/main.60735245.css.map",
+    "main.d91f8c79.js.map": "/static/js/main.d91f8c79.js.map",
     "453.154f73af.chunk.js.map": "/static/js/453.154f73af.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.3b71cc2a.css",
-    "static/js/main.a3bfcbe9.js"
+    "static/css/main.60735245.css",
+    "static/js/main.d91f8c79.js"
   ]
 }
